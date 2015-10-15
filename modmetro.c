@@ -246,10 +246,20 @@ void modmetro_audiomod(t_modmetro *x)
 void modmetro_assist(t_modmetro *x, void *b, long m, long a, char *s)
 {
 	if (m == ASSIST_INLET) { //inlet
-		sprintf(s, "I am inlet %ld", a);
+        switch (a) {
+            case 0:
+                sprintf(s, "(msg) Arm/start/pause, toggle signal multiplier, set tempo, etc.");
+                break;
+            case 1:
+                sprintf(s, "(signal) Tempo multiplier");
+                break;
+                
+            default:
+                break;
+        }
 	} 
 	else {	// outlet
-		sprintf(s, "I am outlet %ld", a); 			
+		sprintf(s, "(signal) el.samm~ style output for el.player~");
 	}
 }
 
