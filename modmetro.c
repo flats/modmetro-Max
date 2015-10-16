@@ -41,6 +41,7 @@ void *modmetro_new(t_symbol *s, long argc, t_atom *argv);
 void modmetro_free(t_modmetro *x);
 void modmetro_assist(t_modmetro *x, void *b, long m, long a, char *s);
 void modmetro_float(t_modmetro *x, double f);
+void modmetro_ft1(t_modmetro *x, double f);
 void modmetro_dsp(t_modmetro *x, t_signal **sp, short *count);
 void modmetro_dsp64(t_modmetro *x, t_object *dsp64, short *count, double samplerate, long maxvectorsize, long flags);
 t_int *modmetro_perform(t_int *w);
@@ -48,7 +49,6 @@ void modmetro_perform64(t_modmetro *x, t_object *dsp64, double **ins, long numin
 
 void modmetro_open(t_modmetro *x, t_symbol *s);
 void modmetro_doopen(t_modmetro *x, t_symbol *s);
-void modmetro_tempo(t_modmetro *x, t_float f);
 
 void modmetro_mute(t_modmetro *x, t_float f);
 void modmetro_pause(t_modmetro *x);
@@ -72,12 +72,12 @@ int C74_EXPORT main(void)
 	t_class *c = class_new("modmetro~", (method)modmetro_new, (method)modmetro_free, (long)sizeof(t_modmetro), 0L, A_GIMME, 0);
     
 	class_addmethod(c, (method)modmetro_float,		"float",	A_FLOAT, 0);
+    class_addmethod(c, (method)modmetro_ft1,		"ft1",      A_FLOAT, 0);    // for setting tempo
 	class_addmethod(c, (method)modmetro_dsp,		"dsp",		A_CANT, 0);		// Old 32-bit MSP dsp chain compilation for Max 5 and earlier
 	class_addmethod(c, (method)modmetro_dsp64,		"dsp64",	A_CANT, 0);		// New 64-bit MSP dsp chain compilation for Max 6
 	class_addmethod(c, (method)modmetro_assist,	"assist",	A_CANT, 0);
 	
     class_addmethod(c, (method)modmetro_open,      "open",		A_DEFSYM,0);
-    class_addmethod(c, (method)modmetro_tempo,     "tempo",	A_FLOAT,0);
     
     class_addmethod(c, (method)modmetro_pause,     "pause",        0);
     class_addmethod(c, (method)modmetro_arm,       "arm",          0);
@@ -105,6 +105,7 @@ void *modmetro_new(t_symbol *s, long argc, t_atom *argv)
 										// use 0 if you don't need inlets
 		outlet_new(x, "signal"); 		// signal outlet (note "signal" rather than NULL)
         inlet_new(x, NULL);
+        floatin(x, 1);
 		x->offset = 0.0;
 	}
     
@@ -123,7 +124,7 @@ void *modmetro_new(t_symbol *s, long argc, t_atom *argv)
     }
     
     x->samps = (60.0/x->tempo) * x->sr;
-    post("samps: %f", x->samps);
+    post("beat length in samples: %f", x->samps);
     x->metro = 1.0;
     x->bp_pos = 0;
     x->bp_length = 0;
@@ -192,7 +193,7 @@ void modmetro_doopen(t_modmetro *x, t_symbol *s)
     }
 }
 
-void modmetro_tempo(t_modmetro *x, t_float f)
+void modmetro_ft1(t_modmetro *x, double f)
 {
     double last_tempo;
     double tempo_fac;
@@ -251,6 +252,9 @@ void modmetro_assist(t_modmetro *x, void *b, long m, long a, char *s)
                 sprintf(s, "(msg) Arm/start/pause, toggle signal multiplier, set tempo, etc.");
                 break;
             case 1:
+                sprintf(s, "(float) Set tempo");
+                break;
+            case 2:
                 sprintf(s, "(signal) Tempo multiplier");
                 break;
                 
