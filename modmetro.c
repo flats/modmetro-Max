@@ -1,6 +1,7 @@
 /**
 	@file
-	modmetro~: a modulating Max/MSP metronome for OS X
+	modmetro~ - modulating Max/MSP metronome for OS X
+ 
     based on simplemsp,
 	original by: jeremy bernstein, jeremy@bootsquad.com,
     samm~,
