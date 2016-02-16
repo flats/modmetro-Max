@@ -512,9 +512,9 @@
 					"numinlets" : 3,
 					"numoutlets" : 1,
 					"outlettype" : [ "signal" ],
-					"patching_rect" : [ 199.0, 328.0, 95.0, 22.0 ],
+					"patching_rect" : [ 199.0, 328.0, 105.0, 22.0 ],
 					"style" : "",
-					"text" : "modmetro~ 105"
+					"text" : "modmetro~ 130.2"
 				}
 
 			}
