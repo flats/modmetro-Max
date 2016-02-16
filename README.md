@@ -6,10 +6,6 @@ This is a Max external written against [version 6.1.4 of the MaxSDK](https://cyc
 
 This patch has only been tested on OS X and may not work on other platforms (especially the parts related to file handling).
 
-## Code Example
-
-Show what the library does as concisely as possible, developers should be able to figure out **how** your project solves their problem by looking at the code example. Make sure the API you are showing off is obvious, and that your code is short and concise.
-
 ## Why This Exists
 
 This exists because I wanted to create variable tempo maps (unsteady tempos, accelerando, rallentando, etc.) in Logic Pro X and Pro Tools. I generate a breakpoint file with breakgen~, import that file with this object, wire the output up to player~, record the audio output, import the audio into one of those DAWs, and then detect the tempo.
