@@ -12,7 +12,18 @@ This exists because I wanted to create variable tempo maps (unsteady tempos, acc
 
 Just download the `OSX-modmetro~.zip` file and drop the contents (`modmetro~.mxo` and `modmetro~.maxhelp`) into your Max 7 user library. On OS X, that's probably `/Users/Shared/Max 7/Library/`.
 
-If you want to compile these, download the MaxSDK and drop this whole repo into `MaxSDK-6.1.4/examples/audio`. It should work with other, later versions of the SDK, and it can go in any subfolder under `examples`.
+## Building
+
+You'll need Xcode (or the Command Line Tools) and [CMake](https://cmake.org) 3.19 or later. The Max SDK headers come in as a git submodule:
+
+```
+git clone --recursive https://github.com/flats/modmetro-Max.git
+cd modmetro-Max
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+If you already cloned without `--recursive`, run `git submodule update --init` first. The universal `modmetro~.mxo` ends up in `externals/`. To work in Xcode instead, generate a project with `cmake -S . -B build -G Xcode` and open `build/modmetro-Max.xcodeproj`.
 
 ## Contributors
 
