@@ -14,6 +14,7 @@
 #include "ext.h"			// standard Max include, always required (except in Jitter)
 #include "ext_obex.h"		// required for "new" style objects
 #include "z_dsp.h"			// required for MSP objects
+#include "ext_critical.h"	// critical regions shared with the audio thread
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,11 +25,12 @@ typedef struct _modmetro {
 	t_pxobject		ob;			// the object itself (t_pxobject in MSP instead of t_object)
 	double			offset; 	// the value of a property of our object
     
-    int bp_pos; /* pos in breakpoint array */
-    int bp_length; /* number of breakpoints in array */
+    long bp_pos; /* pos in breakpoint array */
+    long bp_length; /* number of breakpoints in array */
     double *breakpoints; /* heap array for each tempo factor */
+    t_critical lock; /* guards the breakpoints and beat count, which perform64 uses on the audio thread */
     
-    float sr; /* current sampling rate */
+    double sr; /* current sampling rate */
     double tempo; /* current master tempo */
     double samps; /* number of samples per beat */
     double metro; /* current metro count */
@@ -52,7 +54,7 @@ void modmetro_perform64(t_modmetro *x, t_object *dsp64, double **ins, long numin
 void modmetro_open(t_modmetro *x, t_symbol *s);
 void modmetro_doopen(t_modmetro *x, t_symbol *s, short argc, t_atom *argv);
 
-void modmetro_mute(t_modmetro *x, t_float f);
+void modmetro_mute(t_modmetro *x, double f);
 void modmetro_pause(t_modmetro *x);
 void modmetro_arm(t_modmetro *x);
 void modmetro_resume(t_modmetro *x);
@@ -99,16 +101,21 @@ void *modmetro_new(t_symbol *s, long argc, t_atom *argv)
 {
 	t_modmetro *x = (t_modmetro *)object_alloc(modmetro_class);
 
-	if (x) {
-		dsp_setup((t_pxobject *)x, 1);	// MSP inlets: arg is # of inlets and is REQUIRED!
-										// use 0 if you don't need inlets
-		outlet_new(x, "signal"); 		// signal outlet (note "signal" rather than NULL)
-        inlet_new(x, NULL);
-        floatin(x, 1);
-		x->offset = 0.0;
+	if (!x) {
+		return NULL;
 	}
+
+	dsp_setup((t_pxobject *)x, 1);	// MSP inlets: arg is # of inlets and is REQUIRED!
+									// use 0 if you don't need inlets
+	outlet_new(x, "signal"); 		// signal outlet (note "signal" rather than NULL)
+    inlet_new(x, NULL);
+    floatin(x, 1);
+	x->offset = 0.0;
     
-    /* get system sample rate */
+    critical_new(&x->lock);
+    x->breakpoints = NULL;
+    
+    /* get system sample rate (dsp64 updates it when audio starts) */
     x->sr = sys_getsr();
     
     x->tempo = 0.0;
@@ -123,7 +130,6 @@ void *modmetro_new(t_symbol *s, long argc, t_atom *argv)
     }
     
     x->samps = (60.0/x->tempo) * x->sr;
-    post("beat length in samples: %f", x->samps);
     x->metro = 1.0;
     x->bp_pos = 0;
     x->bp_length = 0;
@@ -138,6 +144,7 @@ void modmetro_free(t_modmetro *x)
 {
 	dsp_free((t_pxobject *)x);
     free(x->breakpoints);
+    critical_free(x->lock);
 }
 
 void modmetro_open(t_modmetro *x, t_symbol *s)
@@ -151,14 +158,18 @@ void modmetro_doopen(t_modmetro *x, t_symbol *s, short argc, t_atom *argv)
     char		ps[MAX_PATH_CHARS];
     char        finalpath[MAX_PATH_CHARS];
     t_fourcc	type;
-    
-    // filebyte_close(x);
+    FILE        *breaks;
+    double      *newbps = NULL;
+    double      *oldbps;
+    double      val;
+    long        count = 0;
+    long        size = 0;
     
     if (s==ps_nothing) {
         if (open_dialog(ps,&path,&type,0L,0))
             return;
     } else {
-        strcpy(ps,s->s_name);
+        strncpy_zero(ps, s->s_name, MAX_PATH_CHARS);
         if (locatefile_extended(ps,&path,&type,&type,-1)) {
             object_error((t_object *)x, "%s: can't find file",ps);
             return;
@@ -166,30 +177,42 @@ void modmetro_doopen(t_modmetro *x, t_symbol *s, short argc, t_atom *argv)
     }
     
     path_toabsolutesystempath(path, ps, finalpath);
-    post(finalpath);
     
-    FILE *breaks;
-    if ((breaks = fopen(finalpath, "r"))) {
-        int counter = 0;
-        char holder[20];
-        char holder_b[20];
-        while((fgets(holder, 20, breaks)) != NULL) {
-            counter++;
-        }
-        post("%i breakpoints", counter);
-        x->bp_length = counter;
-        x->breakpoints = malloc(counter * sizeof(double));
-        counter = 0;
-        rewind(breaks);
-        while((fgets(holder_b, 20, breaks)) != NULL) {
-            x->breakpoints[counter] = atof(holder_b);
-            post("bp: %f", x->breakpoints[counter]);
-            counter++;
-        }
-        fclose(breaks);
-    } else {
-        post("file open failed!");
+    if (!(breaks = fopen(finalpath, "r"))) {
+        object_error((t_object *)x, "couldn't open %s", finalpath);
+        return;
     }
+    /* one tempo factor per line; fscanf skips blank lines and a trailing newline */
+    while (fscanf(breaks, "%lf", &val) == 1) {
+        if (count == size) {
+            double *grown;
+            size = size ? size * 2 : 256;
+            if (!(grown = realloc(newbps, size * sizeof(double)))) {
+                object_error((t_object *)x, "out of memory reading %s", finalpath);
+                free(newbps);
+                fclose(breaks);
+                return;
+            }
+            newbps = grown;
+        }
+        newbps[count++] = val;
+    }
+    if (!feof(breaks)) {
+        object_warn((t_object *)x, "%s: stopped after %ld breakpoints at something that isn't a number", finalpath, count);
+    }
+    fclose(breaks);
+    
+    /* swap in the new breakpoints, starting from the first one, and free the old ones
+       once perform64 can no longer be using them */
+    critical_enter(x->lock);
+    oldbps = x->breakpoints;
+    x->breakpoints = newbps;
+    x->bp_length = count;
+    x->bp_pos = 0;
+    critical_exit(x->lock);
+    free(oldbps);
+    
+    object_post((t_object *)x, "read %ld breakpoints from %s", count, finalpath);
 }
 
 void modmetro_ft1(t_modmetro *x, double f)
@@ -202,12 +225,13 @@ void modmetro_ft1(t_modmetro *x, double f)
         return;
     }
     
+    critical_enter(x->lock);
     last_tempo = x->tempo;
     x->tempo = f;
     tempo_fac = last_tempo / x->tempo; // shrink or stretch factor for beats
     x->samps = (60.0/x->tempo) * x->sr;
-    post("samps: %f", x->samps);
     x->metro *= tempo_fac;
+    critical_exit(x->lock);
 }
 
 void modmetro_pause(t_modmetro *x)
@@ -215,15 +239,19 @@ void modmetro_pause(t_modmetro *x)
     x->pause = 1;
 }
 
-void modmetro_mute(t_modmetro *x, t_float f)
+void modmetro_mute(t_modmetro *x, double f)
 {
     x->mute = (short) f;
 }
 
 void modmetro_arm(t_modmetro *x)
 {
-    x->pause = 1;
+    /* restart from the first beat and the first breakpoint. arm doesn't pause, so the
+       clicks restart right away; send pause, arm, resume for a held start */
+    critical_enter(x->lock);
     x->metro = 1.0;
+    x->bp_pos = 0;
+    critical_exit(x->lock);
 }
 
 void modmetro_resume(t_modmetro *x)
@@ -248,13 +276,13 @@ void modmetro_assist(t_modmetro *x, void *b, long m, long a, char *s)
 	if (m == ASSIST_INLET) { //inlet
         switch (a) {
             case 0:
-                sprintf(s, "(msg) Arm/start/pause, toggle signal multiplier, set tempo, etc.");
+                sprintf(s, "(signal) Tempo multiplier for audiomod, (msg) open, arm, pause, resume, mute, audiomod");
                 break;
             case 1:
                 sprintf(s, "(float) Set tempo");
                 break;
             case 2:
-                sprintf(s, "(signal) Tempo multiplier");
+                sprintf(s, "(msg) Same messages as the left inlet");
                 break;
                 
             default:
@@ -278,7 +306,17 @@ void modmetro_float(t_modmetro *x, double f)
 // registers a function for the signal chain, which operates on 64-bit audio signals
 void modmetro_dsp64(t_modmetro *x, t_object *dsp64, short *count, double samplerate, long maxvectorsize, long flags)
 {
-	post("my sample rate is: %f", samplerate);
+    /* the beat length depends on the sample rate, which can differ from (or have changed
+       since) the one modmetro_new got from sys_getsr() */
+    critical_enter(x->lock);
+    if (samplerate > 0.0 && samplerate != x->sr) {
+        if (x->sr > 0.0) {
+            x->metro *= samplerate / x->sr; /* keep the position within the current beat */
+        }
+        x->sr = samplerate;
+        x->samps = (60.0/x->tempo) * x->sr;
+    }
+    critical_exit(x->lock);
 	
 	// instead of calling dsp_add(), we send the "dsp_add64" message to the object representing the dsp chain
 	// the arguments passed are:
@@ -301,39 +339,35 @@ void modmetro_perform64(t_modmetro *x, t_object *dsp64, double **ins, long numin
     t_double *outL = outs[0];
     t_double *inL = ins[0];
     short pause = x->pause;
-    int n = sampleframes;
+    t_double in;
+    long i;
     
-	/*
-    t_double *inL = ins[0];		// we get audio for each inlet of the object from the **ins argument
-	t_double *outL = outs[0];	// we get audio for each outlet of the object from the **outs argument
-	int n = sampleframes;
-	
-	// this perform method simply copies the input to the output, offsetting the value
-	while (n--)
-		*outL++ = *inL++ + x->offset; */
-    
-    while (n--) {
-        // if (!pause) {
+    /* open, arm, tempo changes and dsp64 change these from other threads */
+    critical_enter(x->lock);
+    for (i = 0; i < sampleframes; i++) {
+        in = inL[i]; /* read before writing outL[i]: MSP may process in place */
+        
+        if (!pause) {
             x->metro -= 1.0;
-        // }
+        }
         
         if (x->metro <= 0) {
             if (x->mute) {
-                *outL++ = 0.0;
+                outL[i] = 0.0;
             } else {
-                *outL++ = 1.0;
+                outL[i] = 1.0;
             }
             x->metro += x->samps;
             if (x->audiomod) {
-                x->metro *= (*inL++ + 1);
+                x->metro *= (in + 1);
             }
             if (x->bp_pos < x->bp_length) {
                 x->metro *= x->breakpoints[x->bp_pos];
                 x->bp_pos++;
             }
         } else {
-            *outL++ = 0.0;
+            outL[i] = 0.0;
         }
     }
+    critical_exit(x->lock);
 }
-
