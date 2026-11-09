@@ -14,6 +14,9 @@
 #include "ext.h"			// standard Max include, always required (except in Jitter)
 #include "ext_obex.h"		// required for "new" style objects
 #include "z_dsp.h"			// required for MSP objects
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 
 // struct to represent the object's state
@@ -43,13 +46,11 @@ void modmetro_free(t_modmetro *x);
 void modmetro_assist(t_modmetro *x, void *b, long m, long a, char *s);
 void modmetro_float(t_modmetro *x, double f);
 void modmetro_ft1(t_modmetro *x, double f);
-void modmetro_dsp(t_modmetro *x, t_signal **sp, short *count);
 void modmetro_dsp64(t_modmetro *x, t_object *dsp64, short *count, double samplerate, long maxvectorsize, long flags);
-t_int *modmetro_perform(t_int *w);
 void modmetro_perform64(t_modmetro *x, t_object *dsp64, double **ins, long numins, double **outs, long numouts, long sampleframes, long flags, void *userparam);
 
 void modmetro_open(t_modmetro *x, t_symbol *s);
-void modmetro_doopen(t_modmetro *x, t_symbol *s);
+void modmetro_doopen(t_modmetro *x, t_symbol *s, short argc, t_atom *argv);
 
 void modmetro_mute(t_modmetro *x, t_float f);
 void modmetro_pause(t_modmetro *x);
@@ -64,8 +65,8 @@ static t_class *modmetro_class = NULL;
 
 //***********************************************************************************************
 
-int C74_EXPORT main(void)
-{	
+void ext_main(void *r)
+{
 	// object initialization, note the use of dsp_free for the freemethod, which is required
 	// unless you need to free allocated memory, in which case you should call dsp_free from
 	// your custom free function.
@@ -74,8 +75,7 @@ int C74_EXPORT main(void)
     
 	class_addmethod(c, (method)modmetro_float,		"float",	A_FLOAT, 0);
     class_addmethod(c, (method)modmetro_ft1,		"ft1",      A_FLOAT, 0);    // for setting tempo
-	class_addmethod(c, (method)modmetro_dsp,		"dsp",		A_CANT, 0);		// Old 32-bit MSP dsp chain compilation for Max 5 and earlier
-	class_addmethod(c, (method)modmetro_dsp64,		"dsp64",	A_CANT, 0);		// New 64-bit MSP dsp chain compilation for Max 6
+	class_addmethod(c, (method)modmetro_dsp64,		"dsp64",	A_CANT, 0);		// 64-bit MSP dsp chain compilation
 	class_addmethod(c, (method)modmetro_assist,	"assist",	A_CANT, 0);
 	
     class_addmethod(c, (method)modmetro_open,      "open",		A_DEFSYM,0);
@@ -92,8 +92,6 @@ int C74_EXPORT main(void)
 	modmetro_class = c;
     
     ps_nothing = gensym("");
-
-	return 0;
 }
 
 
@@ -147,7 +145,7 @@ void modmetro_open(t_modmetro *x, t_symbol *s)
     defer_low(x,(method)modmetro_doopen,s,0,0L);
 }
 
-void modmetro_doopen(t_modmetro *x, t_symbol *s)
+void modmetro_doopen(t_modmetro *x, t_symbol *s, short argc, t_atom *argv)
 {
     short		path;
     char		ps[MAX_PATH_CHARS];
@@ -277,24 +275,7 @@ void modmetro_float(t_modmetro *x, double f)
 
 //***********************************************************************************************
 
-// this function is called when the DAC is enabled, and "registers" a function for the signal chain in Max 5 and earlier.
-// In this case we register the 32-bit, "modmetro_perform" method.
-void modmetro_dsp(t_modmetro *x, t_signal **sp, short *count)
-{
-	post("my sample rate is: %f", sp[0]->s_sr);
-	
-	// dsp_add
-	// 1: (t_perfroutine p) perform method
-	// 2: (long argc) number of args to your perform method
-	// 3...: argc additional arguments, all must be sizeof(pointer) or long
-	// these can be whatever, so you might want to include your object pointer in there
-	// so that you have access to the info, if you need it.
-	dsp_add(modmetro_perform, 4, x, sp[0]->s_vec, sp[1]->s_vec, sp[0]->s_n);
-}
-
-
-// this is the Max 6 version of the dsp method -- it registers a function for the signal chain in Max 6,
-// which operates on 64-bit audio signals.
+// registers a function for the signal chain, which operates on 64-bit audio signals
 void modmetro_dsp64(t_modmetro *x, t_object *dsp64, short *count, double samplerate, long maxvectorsize, long flags)
 {
 	post("my sample rate is: %f", samplerate);
@@ -314,49 +295,7 @@ void modmetro_dsp64(t_modmetro *x, t_object *dsp64, short *count, double sampler
 
 //***********************************************************************************************
 
-// this is the 32-bit perform method for Max 5 and earlier
-t_int *modmetro_perform(t_int *w)
-{
-	// DO NOT CALL post IN HERE, but you can call defer_low (not defer)
-	
-	// args are in a vector, sized as specified in modmetro_dsp method
-	// w[0] contains &modmetro_perform, so we start at w[1]
-	t_modmetro *x = (t_modmetro *)(w[1]);
-	// t_float *inL = (t_float *)(w[2]);
-	t_float *outL = (t_float *)(w[3]);
-	int n = (int)w[4];
-    short pause = x->pause;
-	
-	// this perform method simply copies the input to the output, offsetting the value
-	/* while (n--)
-		*outL++ = *inL++ + x->offset; */
-    while (n--) {
-        if (x->mute) {
-            *outL = 0.0;
-            return w + 5;
-        }
-        
-        if (!pause) {
-            x->metro -= 1.0;
-        }
-        
-        if (x->metro <= 0) {
-            *outL = 1.0;
-            x->metro += x->samps;
-            if (x->bp_pos < x->bp_length) {
-                x->metro *= x->breakpoints[x->bp_pos];
-            }
-        } else {
-            *outL = 0.0;
-        }
-    }
-		
-	// you have to return the NEXT pointer in the array OR MAX WILL CRASH
-	return w + 5;
-}
-
-
-// this is 64-bit perform method for Max 6
+// 64-bit perform method
 void modmetro_perform64(t_modmetro *x, t_object *dsp64, double **ins, long numins, double **outs, long numouts, long sampleframes, long flags, void *userparam)
 {
     t_double *outL = outs[0];
