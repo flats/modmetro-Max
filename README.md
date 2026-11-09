@@ -10,7 +10,7 @@ This exists because I wanted to create variable tempo maps (unsteady tempos, acc
 
 ## Installation
 
-Download `OSX-modmetro~.zip` from the [latest release](https://github.com/flats/modmetro-Max/releases/latest) and drop the contents (`modmetro~.mxo` and `modmetro~.maxhelp`) into your Max user library. For Max 9 on macOS, that's `~/Documents/Max 9/Library/`.
+Download `OSX-modmetro.zip` from the [latest release](https://github.com/flats/modmetro-Max/releases/latest) and drop the contents (`modmetro~.mxo` and `modmetro~.maxhelp`) into your Max user library. For Max 9 on macOS, that's `~/Documents/Max 9/Library/`.
 
 The external is ad-hoc signed rather than signed with an Apple Developer ID, so macOS may block it after you download it. If Max says it can't load `modmetro~`, remove the quarantine flag:
 
