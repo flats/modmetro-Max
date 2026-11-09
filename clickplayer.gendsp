@@ -1,0 +1,129 @@
+{
+	"patcher": {
+		"fileversion": 1,
+		"appversion": {
+			"major": 9,
+			"minor": 1,
+			"revision": 0,
+			"architecture": "x64",
+			"modernui": 1
+		},
+		"classnamespace": "dsp.gen",
+		"rect": [
+			100.0,
+			100.0,
+			760.0,
+			900.0
+		],
+		"boxes": [
+			{
+				"box": {
+					"id": "obj-1",
+					"maxclass": "newobj",
+					"numinlets": 0,
+					"numoutlets": 1,
+					"patching_rect": [
+						20.0,
+						20.0,
+						30.0,
+						22.0
+					],
+					"text": "in 1",
+					"outlettype": [
+						""
+					]
+				}
+			},
+			{
+				"box": {
+					"id": "obj-2",
+					"maxclass": "codebox",
+					"numinlets": 1,
+					"numoutlets": 2,
+					"patching_rect": [
+						20.0,
+						60.0,
+						700.0,
+						760.0
+					],
+					"outlettype": [
+						"",
+						""
+					],
+					"code": "// clickplayer: sample-accurate, click-triggered buffer~ player (e.g. for modmetro~)\n//\n// in1:  trigger signal. Every nonzero sample starts the sound from its first\n//       sample, on that same sample; the trigger's value is that hit's gain\n//       (modmetro~ sends a single 1.0 sample per beat).\n// out1, out2: left and right. A mono buffer~ plays on both.\n//\n// Messages to gen~:\n//   buf <name>   play a different buffer~ (default: clicker)\n//   voices <n>   hits that may sound at once, 1 to 16 (default 4). With 1, each\n//                hit cuts off the previous one; with more, hits ring over each\n//                other. When a hit needs a voice, the oldest playing hit fades out.\n//   fade <ms>    fade-out time for a hit that gets cut off (default 3, 0 = hard cut)\n//   speed <r>    playback speed (default 1 = one buffer~ sample per output sample)\n\nParam voices(4, min=1, max=16);\nParam fade(3, min=0);\nParam speed(1, min=0);\n\nBuffer buf(\"clicker\");\n\nData vpos(17, 1);   // read position in buffer~ samples; -1 = idle\nData vgain(17, 1);  // gain of the hit (its trigger value)\nData vfade(17, 1);  // samples of fade-out left; 0 = not fading\nData vflen(17, 1);  // length of that fade-out\nData vage(17, 1);   // sample count when the hit started, to find the oldest\n\nHistory ready(0);\nHistory now(0);\n\nlen = dim(buf);\nnch = channels(buf);\nfadelen = mstosamps(fade);\nplaying = 0;\noldest = -1;\noldage = 0;\nslot = -1;\nleast = 0;\np = 0;\ng = 0;\nf = 0;\nfl = 0;\nj = 0;\nfr = 0;\nl0 = 0;\nl1 = 0;\nr0 = 0;\nr1 = 0;\nlv = 0;\nrv = 0;\nleft = 0;\nright = 0;\n\nif (ready == 0) {\n\tfor (i = 0; i < 17; i += 1) {\n\t\tpoke(vpos, -1, i, 0);\n\t}\n\tready = 1;\n}\nnow = now + 1;\n\nif (in1 != 0 && len > 0) {\n\t// free the hits that have just played to the end\n\tfor (i = 0; i < 17; i += 1) {\n\t\tif (peek(vpos, i, 0) >= len) {\n\t\t\tpoke(vpos, -1, i, 0);\n\t\t}\n\t}\n\t// count the hits that are playing and not already fading out\n\tfor (i = 0; i < 17; i += 1) {\n\t\tif (peek(vpos, i, 0) >= 0 && peek(vfade, i, 0) == 0) {\n\t\t\tplaying = playing + 1;\n\t\t}\n\t}\n\t// fade out the oldest of them until there's room for this hit\n\tfor (k = 0; k < 17; k += 1) {\n\t\tif (playing >= voices) {\n\t\t\toldest = -1;\n\t\t\toldage = 0;\n\t\t\tfor (i = 0; i < 17; i += 1) {\n\t\t\t\tif (peek(vpos, i, 0) >= 0 && peek(vfade, i, 0) == 0) {\n\t\t\t\t\tif (oldest < 0 || peek(vage, i, 0) < oldage) {\n\t\t\t\t\t\toldest = i;\n\t\t\t\t\t\toldage = peek(vage, i, 0);\n\t\t\t\t\t}\n\t\t\t\t}\n\t\t\t}\n\t\t\tif (oldest >= 0) {\n\t\t\t\tif (fadelen >= 1) {\n\t\t\t\t\tpoke(vfade, fadelen, oldest, 0);\n\t\t\t\t\tpoke(vflen, fadelen, oldest, 0);\n\t\t\t\t} else {\n\t\t\t\t\tpoke(vpos, -1, oldest, 0);\n\t\t\t\t}\n\t\t\t}\n\t\t\tplaying = playing - 1;\n\t\t}\n\t}\n\t// use an idle slot, or else the fading hit closest to silence\n\tfor (i = 0; i < 17; i += 1) {\n\t\tif (slot < 0 && peek(vpos, i, 0) < 0) {\n\t\t\tslot = i;\n\t\t}\n\t}\n\tif (slot < 0) {\n\t\tfor (i = 0; i < 17; i += 1) {\n\t\t\tf = peek(vfade, i, 0);\n\t\t\tif (f > 0 && (slot < 0 || f < least)) {\n\t\t\t\tslot = i;\n\t\t\t\tleast = f;\n\t\t\t}\n\t\t}\n\t}\n\tif (slot >= 0) {\n\t\tpoke(vpos, 0, slot, 0);\n\t\tpoke(vgain, in1, slot, 0);\n\t\tpoke(vfade, 0, slot, 0);\n\t\tpoke(vage, now, slot, 0);\n\t}\n}\n\nfor (i = 0; i < 17; i += 1) {\n\tp = peek(vpos, i, 0);\n\tif (p >= 0) {\n\t\tif (p >= len) {\n\t\t\tpoke(vpos, -1, i, 0);\n\t\t} else {\n\t\t\tg = peek(vgain, i, 0);\n\t\t\tf = peek(vfade, i, 0);\n\t\t\tif (f > 0) {\n\t\t\t\tfl = peek(vflen, i, 0);\n\t\t\t\t// raised-cosine fade from 1 to 0 over fl samples\n\t\t\t\tg = g * 0.5 * (1 + cos(3.141592653589793 * (1 - f / fl)));\n\t\t\t}\n\t\t\tj = floor(p);\n\t\t\tfr = p - j;\n\t\t\tl0 = peek(buf, j, 0);\n\t\t\tl1 = 0;\n\t\t\tif (j + 1 < len) {\n\t\t\t\tl1 = peek(buf, j + 1, 0);\n\t\t\t}\n\t\t\tlv = l0 + (l1 - l0) * fr;\n\t\t\trv = lv;\n\t\t\tif (nch > 1) {\n\t\t\t\tr0 = peek(buf, j, 1);\n\t\t\t\tr1 = 0;\n\t\t\t\tif (j + 1 < len) {\n\t\t\t\t\tr1 = peek(buf, j + 1, 1);\n\t\t\t\t}\n\t\t\t\trv = r0 + (r1 - r0) * fr;\n\t\t\t}\n\t\t\tleft = left + lv * g;\n\t\t\tright = right + rv * g;\n\t\t\tpoke(vpos, p + speed, i, 0);\n\t\t\tif (f > 0) {\n\t\t\t\tif (f <= 1) {\n\t\t\t\t\tpoke(vpos, -1, i, 0);\n\t\t\t\t} else {\n\t\t\t\t\tpoke(vfade, f - 1, i, 0);\n\t\t\t\t}\n\t\t\t}\n\t\t}\n\t}\n}\n\nout1 = left;\nout2 = right;\n",
+					"fontface": 0,
+					"fontname": "<Monospaced>",
+					"fontsize": 12.0
+				}
+			},
+			{
+				"box": {
+					"id": "obj-3",
+					"maxclass": "newobj",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [
+						20.0,
+						840.0,
+						37.0,
+						22.0
+					],
+					"text": "out 1"
+				}
+			},
+			{
+				"box": {
+					"id": "obj-4",
+					"maxclass": "newobj",
+					"numinlets": 1,
+					"numoutlets": 0,
+					"patching_rect": [
+						683.0,
+						840.0,
+						37.0,
+						22.0
+					],
+					"text": "out 2"
+				}
+			}
+		],
+		"lines": [
+			{
+				"patchline": {
+					"source": [
+						"obj-1",
+						0
+					],
+					"destination": [
+						"obj-2",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-2",
+						0
+					],
+					"destination": [
+						"obj-3",
+						0
+					]
+				}
+			},
+			{
+				"patchline": {
+					"source": [
+						"obj-2",
+						1
+					],
+					"destination": [
+						"obj-4",
+						0
+					]
+				}
+			}
+		]
+	}
+}

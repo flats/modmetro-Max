@@ -18,6 +18,27 @@ The external is ad-hoc signed rather than signed with an Apple Developer ID, so 
 xattr -dr com.apple.quarantine ~/Documents/Max\ 9/Library/modmetro~.mxo
 ```
 
+## Playing a sample on each beat
+
+`clickplayer.gendsp` is a `gen~` patcher that plays a `buffer~` from its first sample on every nonzero sample of its input, on that same sample. It turns modmetro~'s output into sample-accurate hits with nothing but Max's built-in objects. Put it next to your patch (or anywhere in Max's search path) and load it with `gen~ @gen clickplayer`:
+
+```
+[modmetro~ 120]
+|
+[gen~ @gen clickplayer]    [buffer~ clicker yoursound.wav]
+|                 |
+[dac~                  ]
+```
+
+Send these messages to the `gen~` object:
+
+- `buf <name>` plays a different `buffer~` (default `clicker`).
+- `voices <n>` sets how many hits can sound at once, from 1 to 16 (default 4). With 1, each hit cuts off the previous one, so fast rolls restart the sound; with more, hits ring over each other. When a hit needs a voice, the oldest playing hit fades out.
+- `fade <ms>` sets that fade-out time (default 3; 0 cuts hard).
+- `speed <r>` sets the playback speed (default 1, one `buffer~` sample per output sample).
+
+The trigger's value sets the hit's gain; modmetro~ always sends 1.0. A stereo `buffer~` plays on the two outlets, and a mono one plays on both.
+
 ## Building
 
 You'll need Xcode (or the Command Line Tools) and [CMake](https://cmake.org) 3.19 or later. The Max SDK headers come in as a git submodule:
